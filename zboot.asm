@@ -38,51 +38,27 @@ main:
     call    print
 
 _main_loop:
-    call    gets
+    call    getchar
     cp      A, 's'
     jp      nz, _main_loop
 
     ld      HL, serial_load_message
     call    print
 
-    ; Receive size of data in big-endian format.
-    call    gets
-    ld      D, A
-    call    gets
-    ld      E, A
-
-    ; Loop.
-    ld      HL, $8000
 receive_data:
-    call    gets
+    call    get_ihex_record
 
-    ld      (HL), A
-    inc     HL
+    cp      A, $00
+    jp      nz, receive_data
 
-    dec     DE
-    ld      A, E
-    or      D
-    jp      z, receive_data_done
-
-    jp      receive_data
-
-receive_data_done:
     ld      HL, received_message
     call    print
 
     ; Execute loaded program.
-    jp      $8000
+    ld      HL, $8000
+    call    print
 
     halt
-
-puts:
-    ; Wait for ready to send.
-    in      A, (UART_PORT_CONTROL)
-    bit     1, A
-    jp      z, puts
-
-    out     (UART_PORT_DATA), A
-    ret
 
 print:
     ; Short-circuit in the case where we're given just
@@ -110,13 +86,179 @@ _print_loop:
 _print_done:
     ret
 
-gets:
+wait_uart_ready:
+    ; Wait for ready to send.
+    in      A, (UART_PORT_CONTROL)
+    bit     1, A
+    jp      z, wait_uart_ready
+    ret
+
+getchar:
     in      A, (UART_PORT_CONTROL)
     bit     0, A
-    jp      z, gets
+    jp      z, getchar
 
     ; Now ready to receive byte.
     in      A, (UART_PORT_DATA)
+    ret
+
+get_ihex_record:
+    push    HL
+    push    BC
+
+    ; Get a character and echo.
+    call    getchar
+    out     (UART_PORT_DATA), A
+
+    ; Expect first character of a record to be ':'
+    cp      ':'
+    jp      nz, _get_ihex_record_invalid
+
+    call    wait_uart_ready
+
+    ; Load size of record data into B.
+    call    getbyte
+    ld      B, A
+
+    call    wait_uart_ready
+
+    ; Next is address, in HL.
+    call    getbyte
+    ld      H, A
+    call    getbyte
+    ld      L, A
+
+    call    wait_uart_ready
+
+    ; Now record type.
+    ; If we assume we're only handling type 0 and 1 records then we don't need to
+    ; actually parse the byte.
+    call    getchar
+    out     (UART_PORT_DATA), A
+    call    getchar
+    out     (UART_PORT_DATA), A
+
+    cp      '0'
+    jp      z, _get_ihex_record_isdata
+
+    call    wait_uart_ready
+
+    ; Get checksum, but don't do anything with it.
+    call    getchar
+    out     (UART_PORT_DATA), A
+    call    getchar
+    out     (UART_PORT_DATA), A
+
+    ; LF (add CR)
+    call    getchar
+    out     (UART_PORT_DATA), A
+
+    call    wait_uart_ready
+
+    ld      A, CR
+    out     (UART_PORT_DATA), A
+
+    ; End record. We're done, so return false.
+    ld      A, $00
+    jp      _get_ihex_done
+
+_get_ihex_record_isdata:
+    call    wait_uart_ready
+
+    ; Get a byte and store at address in HL.
+    ; Then increment HL and loop until B is 0.
+    call    getbyte
+    ld      (HL), A
+    inc     HL
+    djnz    _get_ihex_record_isdata
+
+    call    wait_uart_ready
+
+    ; Get checksum, but don't do anything with it.
+    call    getchar
+    out     (UART_PORT_DATA), A
+    call    getchar
+    out     (UART_PORT_DATA), A
+
+    ; LF (add CR)
+    call    getchar
+    out     (UART_PORT_DATA), A
+
+    call    wait_uart_ready
+
+    ld      A, CR
+    out     (UART_PORT_DATA), A
+
+    ; We've processed data, so another record is required.
+    ; Return true.
+    ld      A, $01
+    jp      _get_ihex_done
+
+_get_ihex_record_invalid:
+    ld      HL, record_invalid_message
+    call    print
+    ld      A, $00
+
+_get_ihex_done:
+    pop     BC
+    pop     HL
+    ret
+
+getbyte:
+    push    BC
+
+    call    getchar
+    out     (UART_PORT_DATA), A
+    ld      B, A
+
+    call    getchar
+    out     (UART_PORT_DATA), A
+    ld      C, A
+
+    call    hexconvert
+
+    pop     BC
+    ret
+
+hexconvert:
+    ; First handle the lower half.
+    ld      A, C
+    call    _hexconvert_sub_getnybble
+    ld      C, A
+
+    ; Now handle the upper half. Shift left 4 times
+    ; and then OR in the value of the lower half.
+    ld      A, B
+    call    _hexconvert_sub_getnybble
+    sla     A
+    sla     A
+    sla     A
+    sla     A
+    or      C
+
+    ret
+
+    ; Helper subroutine. Assumes hex character in A register,
+    ; returns that character's value in A.
+_hexconvert_sub_getnybble:
+    ; Is it a decimal digit?
+    cp      ':'
+    jp      nc, _hexconvert_sub_isuppercase
+
+    sub     $30
+    ret
+
+_hexconvert_sub_isuppercase:
+    ; Is it uppercase char?
+    cp      'G'
+    jp      nc, _hexconvert_sub_islowercase
+
+    sub     $37
+    ret
+
+_hexconvert_sub_islowercase:
+    ; Let's assume it's lowercase at this point.
+    sub     $57
     ret
 
 boot_message:
@@ -137,16 +279,18 @@ boot_message:
     byte    CR, LF
 
     byte    $00
-boot_message_end:
 
 serial_load_message:
     text    "Waiting for serial transfer..."
     byte    CR, LF
     byte    $00
-serial_load_message_end:
 
 received_message:
     text    "Data received:"
     byte    CR, LF
     byte    $00
-received_message_end:
+
+record_invalid_message:
+    text    "Invalid Intel-HEX record."
+    byte    CR, LF
+    byte    $00
