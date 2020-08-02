@@ -51,10 +51,85 @@ _main_prompt_loop:
     ld      HL, prompt
     call    print
 
-    call    cmd_sub_load
+    ld      HL, PROMPT_CMD
+    call    getline
 
-    ; Execute loaded program.
-    call    $8000
+    call    wait_uart_ready
+    ld      A, CR
+    out     (UART_PORT_DATA), A
+    call    wait_uart_ready
+    ld      A, LF
+    out     (UART_PORT_DATA), A
+
+    ld      B, (monitor_commands_end-monitor_commands)/2
+    ld      HL, monitor_commands
+_main_prompt_parse_loop:
+    ; Load command address in little-endian format.
+    ld      E, (HL)
+    inc     HL
+    ld      D, (HL)
+    inc     HL
+
+    ; DE now holds address of command, plus command string.
+    ; Save HL and load the command subroutine address into it.
+    push    HL
+
+    ld      A, (DE)
+    ld      L, A
+    inc     DE
+
+    ld      A, (DE)
+    ld      H, A
+    inc     DE
+
+    ; DE now holds address of string with which to make comparison.
+
+    ; Save command subroutine address.
+    push    HL
+
+    ; Compare the string, pointed to by DE,
+    ; with the command we got from user, in PROMPT_CMD.
+    ld      HL, PROMPT_CMD
+_prompt_command_compare:
+    ld      C, (HL)
+    ld      A, (DE)
+
+    inc     HL
+    inc     DE
+
+    cp      C
+    jp      nz, _prompt_command_next
+
+    ; If A is null, we've got to the end of both
+    ; strings and not found any differences.
+    cp      NULL
+    jp      z, _prompt_command_found
+
+    ; Check next character.
+    jp      _prompt_command_compare
+
+_prompt_command_next:
+    ; Discard subroutine address and restore command address.
+    pop     HL
+    pop     HL ; Command address.
+
+    djnz    _main_prompt_parse_loop
+    
+    ; Exhausted list and not found command.
+    ld      HL, command_not_found_message
+    call    print
+    jp      _main_prompt_loop
+
+_prompt_command_found:
+    ; Restore subroutine address and execute.
+    pop     HL
+    jp      (HL)
+
+_prompt_command_ret:
+    ; Discard command search address and jump
+    ; back to prompt.
+    pop     HL
+    jp      _main_prompt_loop
 
     halt
     
@@ -70,7 +145,11 @@ _cmd_sub_load_data:
 
     ld      HL, received_message
     call    print
-    ret
+    jp      _prompt_command_ret
+
+cmd_sub_exec:
+    call    $8000
+    jp      _prompt_command_ret
 
     ; Gets a CR/LF-terminated line from serial port.
     ; Destination address is in HL.
@@ -102,6 +181,9 @@ _getline_characters:
     ; Full line now in buffer.
     ; Let's reset our pointer to the start.
 _getline_done:
+    ; Write terminating null.
+    ld      (HL), NULL
+
     pop     HL
     ret
 
@@ -316,14 +398,23 @@ prompt:
     text    "> "
     byte    NULL
 
+command_not_found_message:
+    text    "Command not found."
+    byte    CR, LF, NULL
+
     ; Command table for the monitor.
 monitor_commands:
     addr    cmd_load
+    addr    cmd_exec
 monitor_commands_end:
 
 cmd_load:
     addr    cmd_sub_load
     text    "load"
+    byte    NULL
+cmd_exec:
+    addr    cmd_sub_exec
+    text    "exec"
     byte    NULL
 
 boot_message:
