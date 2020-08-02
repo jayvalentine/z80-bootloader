@@ -4,10 +4,17 @@
     ; Character definitions
 CR                  = $0d
 LF                  = $0a
+NULL                = $00
 
     ; Symbol definitions
 UART_PORT_DATA      = 0b00000001
 UART_PORT_CONTROL   = 0b00000000
+
+SYSTEM_RAM_START    = $f000
+IHEX_RECORD         = SYSTEM_RAM_START
+IHEX_RECORD_END     = IHEX_RECORD+44    ; Assuming a maximum of 16 data bytes for a record.
+                                        ; From observation, this seems valid.
+                                        ; Reserve an extra character for NULL.
 
     ; Program reset vector.
     org     $0000
@@ -55,8 +62,7 @@ receive_data:
     call    print
 
     ; Execute loaded program.
-    ld      HL, $8000
-    call    print
+    call    $8000
 
     halt
 
@@ -103,59 +109,81 @@ getchar:
     ret
 
 get_ihex_record:
+    push    DE
     push    HL
     push    BC
 
-    ; Get a character and echo.
+    ; Zero the record string.
+    ld      HL, IHEX_RECORD
+    ld      B, IHEX_RECORD_END-IHEX_RECORD
+_get_ihex_zero:
+    ld      (HL), NULL
+    inc     HL
+    djnz    _get_ihex_zero
+
+    ; Get a CR/LF-delimited record.
+    ld      HL, IHEX_RECORD
+
+_get_ihex_record_skip_whitespace:
     call    getchar
-    out     (UART_PORT_DATA), A
+    cp      CR
+    jp      z, _get_ihex_record_skip_whitespace
+    cp      LF
+    jp      z, _get_ihex_record_skip_whitespace
+
+    ; We now have our first valid character in A.
+_get_ihex_characters:
+    ld      (HL), A
+    inc     HL
+    call    getchar
+    cp      CR
+    jp      z, _get_ihex_record_get_chars_done
+    cp      LF
+    jp      z, _get_ihex_record_get_chars_done
+    jp      _get_ihex_characters
+
+    ; Full line now in IHEX_RECORD.
+    ; Let's reset our pointer to the start.
+_get_ihex_record_get_chars_done
+    ld      HL, IHEX_RECORD
+
+    ; Get a character and echo.
+    call    _ihex_sub_getchar
 
     ; Expect first character of a record to be ':'
     cp      ':'
     jp      nz, _get_ihex_record_invalid
 
-    call    wait_uart_ready
-
     ; Load size of record data into B.
-    call    getbyte
+    call    _ihex_sub_getbyte
     ld      B, A
 
-    call    wait_uart_ready
+    ; Next is address, in DE.
+    call    _ihex_sub_getbyte
+    ld      D, A
+    call    _ihex_sub_getbyte
+    ld      E, A
 
-    ; Next is address, in HL.
-    call    getbyte
-    ld      H, A
-    call    getbyte
-    ld      L, A
-
-    call    wait_uart_ready
-
-    ; Now record type.
-    ; If we assume we're only handling type 0 and 1 records then we don't need to
-    ; actually parse the byte.
-    call    getchar
-    out     (UART_PORT_DATA), A
-    call    getchar
-    out     (UART_PORT_DATA), A
-
-    cp      '0'
+    ; Now record type. We only handle the following record types currently:
+    ; 00 - Data record
+    ; 01 - End of file record
+    ;
+    ; Seeing as this is a 16-bit address space we're unlikely to need the others.
+    call    _ihex_sub_getbyte
+    cp      0
     jp      z, _get_ihex_record_isdata
 
     call    wait_uart_ready
 
     ; Get checksum, but don't do anything with it.
-    call    getchar
-    out     (UART_PORT_DATA), A
-    call    getchar
-    out     (UART_PORT_DATA), A
+    call    _ihex_sub_getbyte
 
-    ; LF (add CR)
-    call    getchar
-    out     (UART_PORT_DATA), A
-
+    ; Print CRLF
     call    wait_uart_ready
-
     ld      A, CR
+    out     (UART_PORT_DATA), A
+    call    wait_uart_ready
+    ld      A, LF
     out     (UART_PORT_DATA), A
 
     ; End record. We're done, so return false.
@@ -165,28 +193,24 @@ get_ihex_record:
 _get_ihex_record_isdata:
     call    wait_uart_ready
 
-    ; Get a byte and store at address in HL.
-    ; Then increment HL and loop until B is 0.
-    call    getbyte
-    ld      (HL), A
-    inc     HL
+    ; Get a byte and store at address in DE.
+    ; Then increment DE and loop until B is 0.
+    call    _ihex_sub_getbyte
+    ld      (DE), A
+    inc     DE
     djnz    _get_ihex_record_isdata
 
     call    wait_uart_ready
 
     ; Get checksum, but don't do anything with it.
-    call    getchar
-    out     (UART_PORT_DATA), A
-    call    getchar
-    out     (UART_PORT_DATA), A
+    call    _ihex_sub_getbyte
 
-    ; LF (add CR)
-    call    getchar
-    out     (UART_PORT_DATA), A
-
+    ; Print CRLF
     call    wait_uart_ready
-
     ld      A, CR
+    out     (UART_PORT_DATA), A
+    call    wait_uart_ready
+    ld      A, LF
     out     (UART_PORT_DATA), A
 
     ; We've processed data, so another record is required.
@@ -202,17 +226,33 @@ _get_ihex_record_invalid:
 _get_ihex_done:
     pop     BC
     pop     HL
+    pop     DE
     ret
 
-getbyte:
+_ihex_sub_getchar:
+    call    wait_uart_ready
+    ld      A, (HL)
+    cp      0
+    jp      nz, _ihex_sub_getchar_okay
+
+    ; Change return address to error handler.
+    pop     HL
+    ld      HL, _get_ihex_record_invalid
+    push    HL
+    ret
+
+_ihex_sub_getchar_okay:
+    inc     HL
+    out     (UART_PORT_DATA), A
+    ret
+
+_ihex_sub_getbyte:
     push    BC
 
-    call    getchar
-    out     (UART_PORT_DATA), A
+    call    _ihex_sub_getchar
     ld      B, A
 
-    call    getchar
-    out     (UART_PORT_DATA), A
+    call    _ihex_sub_getchar
     ld      C, A
 
     call    hexconvert
