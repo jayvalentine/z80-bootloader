@@ -16,6 +16,9 @@ IHEX_RECORD_END     = IHEX_RECORD+44    ; Assuming a maximum of 16 data bytes fo
                                         ; From observation, this seems valid.
                                         ; Reserve an extra character for NULL.
 
+PROMPT_CMD          = IHEX_RECORD_END
+PROMPT_CMD_END      = PROMPT_CMD+16
+
     ; Program reset vector.
     org     $0000
 reset:
@@ -44,27 +47,63 @@ main:
     ld      HL, boot_message
     call    print
 
-_main_loop:
-    call    getchar
-    cp      A, 's'
-    jp      nz, _main_loop
-
-    ld      HL, serial_load_message
+_main_prompt_loop:
+    ld      HL, prompt
     call    print
 
-receive_data:
-    call    get_ihex_record
-
-    cp      A, $00
-    jp      nz, receive_data
-
-    ld      HL, received_message
-    call    print
+    call    cmd_sub_load
 
     ; Execute loaded program.
     call    $8000
 
     halt
+    
+cmd_sub_load:
+    ld      HL, serial_load_message
+    call    print
+
+_cmd_sub_load_data:
+    call    get_ihex_record
+
+    cp      A, $00
+    jp      nz, _cmd_sub_load_data
+
+    ld      HL, received_message
+    call    print
+    ret
+
+    ; Gets a CR/LF-terminated line from serial port.
+    ; Destination address is in HL.
+getline:
+    push    HL
+
+_getline_skip_whitespace
+    call    getchar
+    cp      CR
+    jp      z, _getline_skip_whitespace
+    cp      LF
+    jp      z, _getline_skip_whitespace
+
+    ; We now have our first valid character in A.
+_getline_characters:
+    out     (UART_PORT_DATA), A ; Echo.
+    ld      (HL), A
+    inc     HL
+
+    call    getchar
+    
+    cp      CR
+    jp      z, _getline_done
+    cp      LF
+    jp      z, _getline_done
+
+    jp      _getline_characters
+
+    ; Full line now in buffer.
+    ; Let's reset our pointer to the start.
+_getline_done:
+    pop     HL
+    ret
 
 print:
     ; Short-circuit in the case where we're given just
@@ -123,29 +162,7 @@ _get_ihex_zero:
 
     ; Get a CR/LF-delimited record.
     ld      HL, IHEX_RECORD
-
-_get_ihex_record_skip_whitespace:
-    call    getchar
-    cp      CR
-    jp      z, _get_ihex_record_skip_whitespace
-    cp      LF
-    jp      z, _get_ihex_record_skip_whitespace
-
-    ; We now have our first valid character in A.
-_get_ihex_characters:
-    ld      (HL), A
-    inc     HL
-    call    getchar
-    cp      CR
-    jp      z, _get_ihex_record_get_chars_done
-    cp      LF
-    jp      z, _get_ihex_record_get_chars_done
-    jp      _get_ihex_characters
-
-    ; Full line now in IHEX_RECORD.
-    ; Let's reset our pointer to the start.
-_get_ihex_record_get_chars_done
-    ld      HL, IHEX_RECORD
+    call    getline
 
     ; Get a character and echo.
     call    _ihex_sub_getchar
@@ -191,16 +208,12 @@ _get_ihex_record_get_chars_done
     jp      _get_ihex_done
 
 _get_ihex_record_isdata:
-    call    wait_uart_ready
-
     ; Get a byte and store at address in DE.
     ; Then increment DE and loop until B is 0.
     call    _ihex_sub_getbyte
     ld      (DE), A
     inc     DE
     djnz    _get_ihex_record_isdata
-
-    call    wait_uart_ready
 
     ; Get checksum, but don't do anything with it.
     call    _ihex_sub_getbyte
@@ -230,7 +243,6 @@ _get_ihex_done:
     ret
 
 _ihex_sub_getchar:
-    call    wait_uart_ready
     ld      A, (HL)
     cp      0
     jp      nz, _ihex_sub_getchar_okay
@@ -243,7 +255,6 @@ _ihex_sub_getchar:
 
 _ihex_sub_getchar_okay:
     inc     HL
-    out     (UART_PORT_DATA), A
     ret
 
 _ihex_sub_getbyte:
@@ -300,6 +311,20 @@ _hexconvert_sub_islowercase:
     ; Let's assume it's lowercase at this point.
     sub     $57
     ret
+
+prompt:
+    text    "> "
+    byte    NULL
+
+    ; Command table for the monitor.
+monitor_commands:
+    addr    cmd_load
+monitor_commands_end:
+
+cmd_load:
+    addr    cmd_sub_load
+    text    "load"
+    byte    NULL
 
 boot_message:
     text    "ZBoot, a Z80 bootloader/monitor."
