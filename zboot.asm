@@ -395,6 +395,8 @@ _hexconvert_sub_islowercase:
     ret
 
 prompt:
+    text    "Ready."
+    byte    CR, LF
     text    "> "
     byte    NULL
 
@@ -426,27 +428,16 @@ boot_message:
     
     byte    CR, LF
 
-    text    "Select one of the following options:"
-    byte    CR, LF
-
-    byte    CR, LF
-
-    text    "(s)erial boot"
-    byte    CR, LF
-
-    byte    $00
+    byte    NULL
 
 serial_load_message:
     text    "Waiting for serial transfer..."
-    byte    CR, LF
-    byte    $00
+    byte    CR, LF, NULL
 
 received_message:
     text    "Data received:"
-    byte    CR, LF
-    byte    $00
+    byte    CR, LF, NULL
 
 record_invalid_message:
     text    "Invalid Intel-HEX record."
-    byte    CR, LF
-    byte    $00
+    byte    CR, LF, NULL
