@@ -1,0 +1,15 @@
+# Binary files
+*.bin
+*.hex
+*.srec
+
+# Disassembly
+*.diss
+
+# Listings
+*.lst
+*.list
+*.map
+
+
+
