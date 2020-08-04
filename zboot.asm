@@ -143,8 +143,6 @@ _cmd_sub_load_data:
     cp      A, $00
     jp      nz, _cmd_sub_load_data
 
-    ld      HL, received_message
-    call    print
     jp      _prompt_command_ret
 
 cmd_sub_exec:
@@ -395,14 +393,10 @@ _hexconvert_sub_islowercase:
     ret
 
 prompt:
-    text    "Ready."
-    byte    CR, LF
-    text    "> "
-    byte    NULL
+    string  "Ready.\r\n> "
 
 command_not_found_message:
-    text    "Command not found."
-    byte    CR, LF, NULL
+    string  "Command not found.\r\n"
 
     ; Command table for the monitor.
 monitor_commands:
@@ -412,32 +406,16 @@ monitor_commands_end:
 
 cmd_load:
     addr    cmd_sub_load
-    text    "load"
-    byte    NULL
+    string  "load"
 cmd_exec:
     addr    cmd_sub_exec
-    text    "exec"
-    byte    NULL
+    string  "exec"
 
 boot_message:
-    text    "ZBoot, a Z80 bootloader/monitor."
-    byte    CR, LF
-    
-    text    "Copyright (c) 2020 Jay Valentine."
-    byte    CR, LF
-    
-    byte    CR, LF
-
-    byte    NULL
+    string  "ZBoot, a Z80 bootloader/monitor by Jay Valentine.\r\n\r\n"
 
 serial_load_message:
-    text    "Waiting for serial transfer..."
-    byte    CR, LF, NULL
-
-received_message:
-    text    "Data received:"
-    byte    CR, LF, NULL
+    string  "Waiting for serial transfer...\r\n"
 
 record_invalid_message:
-    text    "Invalid Intel-HEX record."
-    byte    CR, LF, NULL
+    string  "Invalid Intel-HEX record.\r\n"
