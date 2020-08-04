@@ -225,6 +225,8 @@ _cmd_sub_load_data:
     cp      A, $00
     jp      nz, _cmd_sub_load_data
 
+    newline
+
     jp      _prompt_command_ret
 
 cmd_sub_exec:
