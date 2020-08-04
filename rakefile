@@ -2,22 +2,6 @@ desc "Build zboot binary"
 task :build do
     system("vasmz80_oldstyle -L zboot.lst -Fbin -o zboot.bin zboot.asm")
     system("z80dasm -l -a -t zboot.bin > zboot.diss")
-
-    symbols = {}
-
-    File.open("zboot.lst", "r") do |f|
-        f.each_line do |l|
-            if (m = /([\w\d]+) EXPR\((\d+)=.*\) ABS/.match(l))
-                symbols[m[1]] = m[2].to_i
-            end
-        end
-    end
-
-    File.open("zboot.syms", "w") do |f|
-        symbols.each do |sym, value|
-            f.puts "zboot_#{sym} = $#{value.to_s(16)}"
-        end
-    end
 end
 
 desc "Flash to ROM"
