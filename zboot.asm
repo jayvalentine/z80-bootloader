@@ -1,6 +1,26 @@
     ; ZBoot, a Z80 Bootloader.
     ; Copyright (c) 2020 Jay Valentine
 
+    ; Helpful macros.
+
+    macro   newline
+    push    HL
+    ld      L, CR
+    call    direct_syscall_swrite
+    ld      L, LF
+    call    direct_syscall_swrite
+    pop     HL
+    endmacro
+
+    ; Macro for defining a syscall.
+    macro   defsyscall, name
+syscall_\1:
+    pop     HL    ; Syscall entry will have saved HL, which we want to restore.
+
+    ; Useful if we want to call the syscall directly from within the bootloader.
+direct_syscall_\1:
+    endmacro
+
     ; Character definitions
 CR                  = $0d
 LF                  = $0a
@@ -24,8 +44,75 @@ PROMPT_CMD_END      = PROMPT_CMD+16
 reset:
     jp      start
 
-    ; Startup code.
+    ; Syscall handler.
+    org     $0030
+syscall_entry:
+    ; We have 8 bytes to play with...
+    sla     A                   ; 2 bytes. A*2, to form an offset into the syscall table.
+    push    HL                  ; 1 byte. Save HL because we're going to trash it.
+    ld      HL, syscall_table   ; 3 bytes. Load base address into HL.
+    ld      L, A                ; 1 byte. Load offset into L.
+                                ; Note that this assumes that the syscall table is aligned on
+                                ; a 256-byte boundary. Which it is.
+    jp      (HL)                ; 1 byte. Jumps to syscall routine.
+
+    ; Debugger breakpoint handler.
+breakpoint_entry:
+    halt
+
+    ; Syscall table.
     org     $0100
+syscall_table:
+    addr    syscall_swrite
+    addr    syscall_sread
+
+    ; Syscall definitions.
+
+    ; 0: swrite
+    ;
+    ; Parameters:
+    ; L     - Byte character to send.
+    ;
+    ; Returns:
+    ; Nothing.
+    ;
+    ; Description:
+    ; Busy-waits until serial port is ready to transmit, then
+    ; writes the given character to the serial port.
+    defsyscall  swrite
+_swrite_wait:
+    ; Wait for ready to send.
+    in      A, (UART_PORT_CONTROL)
+    bit     1, A
+    jp      z, _swrite_wait
+
+    ; Send character.
+    ld      A, L
+    out     (UART_PORT_DATA), A
+    ret
+
+    ; 1: sread
+    ;
+    ; Parameters:
+    ; None.
+    ;
+    ; Returns:
+    ; Character received from serial port, in A.
+    ;
+    ; Description:
+    ; Busy-waits until serial port receives data,
+    ; then returns a single received character.
+    defsyscall  sread
+_sread_wait:
+    ; Wait for received data.
+    in      A, (UART_PORT_CONTROL)
+    bit     0, A
+    jp      z, _sread_wait
+
+    ; Now ready to receive byte.
+    in      A, (UART_PORT_DATA)
+    ret
+
 start:
     ; Initialize stack pointer.
     ld      SP, $ffff
@@ -54,12 +141,7 @@ _main_prompt_loop:
     ld      HL, PROMPT_CMD
     call    getline
 
-    call    wait_uart_ready
-    ld      A, CR
-    out     (UART_PORT_DATA), A
-    call    wait_uart_ready
-    ld      A, LF
-    out     (UART_PORT_DATA), A
+    newline
 
     ld      B, (monitor_commands_end-monitor_commands)/2
     ld      HL, monitor_commands
@@ -155,7 +237,7 @@ getline:
     push    HL
 
 _getline_skip_whitespace
-    call    getchar
+    call    direct_syscall_sread
     cp      CR
     jp      z, _getline_skip_whitespace
     cp      LF
@@ -167,7 +249,7 @@ _getline_characters:
     ld      (HL), A
     inc     HL
 
-    call    getchar
+    call    direct_syscall_sread
     
     cp      CR
     jp      z, _getline_done
@@ -209,22 +291,6 @@ _print_loop:
     jp      _print_loop
 
 _print_done:
-    ret
-
-wait_uart_ready:
-    ; Wait for ready to send.
-    in      A, (UART_PORT_CONTROL)
-    bit     1, A
-    jp      z, wait_uart_ready
-    ret
-
-getchar:
-    in      A, (UART_PORT_CONTROL)
-    bit     0, A
-    jp      z, getchar
-
-    ; Now ready to receive byte.
-    in      A, (UART_PORT_DATA)
     ret
 
 get_ihex_record:
@@ -270,18 +336,11 @@ _get_ihex_zero:
     cp      0
     jp      z, _get_ihex_record_isdata
 
-    call    wait_uart_ready
-
     ; Get checksum, but don't do anything with it.
     call    _ihex_sub_getbyte
 
     ; Print CRLF
-    call    wait_uart_ready
-    ld      A, CR
-    out     (UART_PORT_DATA), A
-    call    wait_uart_ready
-    ld      A, LF
-    out     (UART_PORT_DATA), A
+    
 
     ; End record. We're done, so return false.
     ld      A, $00
@@ -299,12 +358,7 @@ _get_ihex_record_isdata:
     call    _ihex_sub_getbyte
 
     ; Print CRLF
-    call    wait_uart_ready
-    ld      A, CR
-    out     (UART_PORT_DATA), A
-    call    wait_uart_ready
-    ld      A, LF
-    out     (UART_PORT_DATA), A
+    newline
 
     ; We've processed data, so another record is required.
     ; Return true.
