@@ -411,7 +411,12 @@ cmd_exec:
     addr    cmd_sub_exec
     string  "exec"
 
+    
 boot_message:
+    ; Some setup of the display, using ANSI escape sequences.
+    text    "\033[2J"           ; Clear screen
+    text    "\033[1;1H"         ; Cursor to top-left (not all terminal emulators do this when clearing the screen)
+    text    "\033[32;40m"       ; Green text on black background, for that retro feel ;)
     string  "ZBoot, a Z80 bootloader/monitor by Jay Valentine.\r\n\r\n"
 
 serial_load_message:
