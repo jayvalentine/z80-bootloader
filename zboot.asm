@@ -48,12 +48,16 @@ reset:
     org     $0030
 syscall_entry:
     ; We have 8 bytes to play with...
-    sla     A                   ; 2 bytes. A*2, to form an offset into the syscall table.
-    push    HL                  ; 1 byte. Save HL because we're going to trash it.
-    ld      HL, syscall_table   ; 3 bytes. Load base address into HL.
-    ld      L, A                ; 1 byte. Load offset into L.
+    push    HL                  ; Save HL because we're going to trash it.
+    ld      HL, syscall_table   ; Load base address into HL.
+
+    ld      L, A                ; Load offset into L.
                                 ; Note that this assumes that the syscall table is aligned on
-                                ; a 256-byte boundary. Which it is.
+                                ; a 256-byte boundary. Which it is...
+                                ;
+                                ; And that A has already been configured to be a 2-byte aligned offset
+                                ; into the table. If this isn't the case, BAD THINGS HAPPEN.
+
     jp      (HL)                ; 1 byte. Jumps to syscall routine.
 
     ; Debugger breakpoint handler.
