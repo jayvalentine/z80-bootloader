@@ -29,9 +29,9 @@ endmacro
 
 This section describes the syscalls available to an application running on ZBoot.
 
-#### 0: swrite
+----
 
-Write a character to the serial port.
+#### 0: swrite - write character to serial port.
 
 **Parameters**
 
@@ -46,9 +46,9 @@ None.
 Busy-waits until serial port is ready to transmit,
 then writes the given character to the serial port.
 
-#### 1: sread
+----
 
-Read a character from serial port.
+#### 1: sread - read character from serial port.
 
 **Parameters**
 
