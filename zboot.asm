@@ -72,7 +72,7 @@ syscall_table:
 
     ; Syscall definitions.
 
-    ; 0: swrite
+    ; 0: swrite: Write character to serial port.
     ;
     ; Parameters:
     ; L     - Byte character to send.
@@ -95,7 +95,7 @@ _swrite_wait:
     out     (UART_PORT_DATA), A
     ret
 
-    ; 1: sread
+    ; 1: sread: Read character from serial port.
     ;
     ; Parameters:
     ; None.
