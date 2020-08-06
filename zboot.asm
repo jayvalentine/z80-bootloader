@@ -44,7 +44,7 @@ PROMPT_CMD_END      = PROMPT_CMD+16
 reset:
     jp      start
 
-    ; Syscall handler.
+    ; Syscall handler. Called using the 'rst 48' instruction.
     org     $0030
 syscall_entry:
     ; We have 8 bytes to play with...
