@@ -15,7 +15,8 @@
     ; Macro for defining a syscall.
     macro   defsyscall, name
 syscall_\1:
-    pop     HL    ; Syscall entry will have saved HL, which we want to restore.
+    pop     DE
+    pop     HL    ; Syscall entry will have saved HL and DE, which we want to restore.
 
     ; Useful if we want to call the syscall directly from within the bootloader.
 direct_syscall_\1:
@@ -47,22 +48,27 @@ reset:
     ; Syscall handler. Called using the 'rst 48' instruction.
     org     $0030
 syscall_entry:
-    ; We have 8 bytes to play with...
-    push    HL                  ; Save HL because we're going to trash it.
-    ld      HL, syscall_table   ; Load base address into HL.
-
-    ld      L, A                ; Load offset into L.
-                                ; Note that this assumes that the syscall table is aligned on
-                                ; a 256-byte boundary. Which it is...
-                                ;
-                                ; And that A has already been configured to be a 2-byte aligned offset
-                                ; into the table. If this isn't the case, BAD THINGS HAPPEN.
-
-    jp      (HL)                ; 1 byte. Jumps to syscall routine.
+    jp      syscall_handler
 
     ; Debugger breakpoint handler.
+    org     $0038
 breakpoint_entry:
     halt
+
+syscall_handler:
+    push    HL
+    push    DE
+    ld      DE, syscall_table
+    ld      E, A
+    
+    ld      A, (DE)
+    ld      L, A
+    inc     DE
+
+    ld      A, (DE)
+    ld      H, A
+    
+    jp      (HL)
 
     ; Syscall table.
     org     $0100
