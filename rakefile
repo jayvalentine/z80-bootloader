@@ -102,6 +102,7 @@ task :flash => :build do
     system("minipro -p at28c64b -s -w zboot.bin")
 end
 
+desc "Emulate system using Zemu"
 task :run => :build do
     conf = Zemu::Config.new do
         name "zemu_zforth"
