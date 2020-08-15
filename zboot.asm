@@ -32,7 +32,14 @@ UART_PORT_DATA      = 0b00000001
 UART_PORT_CONTROL   = 0b00000000
 
 SYSTEM_RAM_START    = $f000
-IHEX_RECORD         = SYSTEM_RAM_START
+
+RX_BUF              = SYSTEM_RAM_START
+RX_BUF_END          = RX_BUF+$100
+
+RX_BUF_HEAD         = RX_BUF_END
+RX_BUF_TAIL         = RX_BUF_HEAD+1
+
+IHEX_RECORD         = RX_BUF_TAIL+1
 IHEX_RECORD_END     = IHEX_RECORD+44    ; Assuming a maximum of 16 data bytes for a record.
                                         ; From observation, this seems valid.
                                         ; Reserve an extra character for NULL.
@@ -43,6 +50,8 @@ PROMPT_CMD_END      = PROMPT_CMD+16
     ; Program reset vector.
     org     $0000
 reset:
+    ; Disable interrupts on startup.
+    di
     jp      start
 
     ; Syscall handler. Called using the 'rst 48' instruction.
@@ -50,10 +59,32 @@ reset:
 syscall_entry:
     jp      syscall_handler
 
-    ; Debugger breakpoint handler.
+    ; Interrupt handler.
     org     $0038
-breakpoint_entry:
-    halt
+interrupt_entry:
+    di
+    push    HL
+    push    AF
+
+    ; Get current tail of buffer.
+    ld      H, $f0
+    ld      A, (RX_BUF_TAIL)
+    ld      L, A
+
+    ; Read data from UART.
+    in      A, (UART_PORT_DATA)
+
+    ; Store received character.
+    ld      (HL), A
+
+    ; Increment tail.
+    ld      HL, RX_BUF_TAIL
+    inc     (HL)
+
+    pop     AF
+    pop     HL
+    ei
+    reti
 
 syscall_handler:
     push    HL
@@ -113,14 +144,29 @@ _swrite_wait:
     ; Busy-waits until serial port receives data,
     ; then returns a single received character.
     defsyscall  sread
+    push    HL
+
+    ld      H, $f0
+    ld      A, (RX_BUF_HEAD)
+    ld      L, A
+
+    ; Wait for char in buffer.
 _sread_wait:
-    ; Wait for received data.
-    in      A, (UART_PORT_CONTROL)
-    bit     0, A
+    ld      A, (RX_BUF_TAIL)
+    cp      L
+
+    ; If head and tail are equal, there's no data in buffer.
     jp      z, _sread_wait
 
-    ; Now ready to receive byte.
-    in      A, (UART_PORT_DATA)
+_sread_available:
+    ; Load character in A.
+    ld      A, (HL)
+
+    ; Increment head.
+    ld      HL, RX_BUF_HEAD
+    inc     (HL)
+
+    pop     HL
     ret
 
 start:
@@ -136,9 +182,18 @@ start:
     ; Configure UART.
     ; UART will run at 57600baud with a 3.6864MHz clock.
     ; Word length of 8 bits + 1 stop.
-    ; Interrupts disabled.
-    ld      A, 0b00010110
+    ; Interrupts enabled.
+    ld      A, 0b10010110
     out     (UART_PORT_CONTROL), A
+
+    ; Initialize RX buffer pointers.
+    ld      A, $00
+    ld      (RX_BUF_HEAD), A
+    ld      (RX_BUF_TAIL), A
+
+    ; Enable interrupts, mode 1.
+    im      1
+    ei
 
 main:
     ld      HL, boot_message
