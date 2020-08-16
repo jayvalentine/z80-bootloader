@@ -306,6 +306,50 @@ cmd_sub_exec:
     call    $8000
     jp      _prompt_command_ret
 
+cmd_sub_break:
+    push    DE
+    push    HL
+    push    BC
+
+    ; Parse breakpoint address.
+
+    ; Upper half.
+    ld      HL, ARGV
+    ld      B, (HL)
+    inc     HL
+    ld      C, (HL)
+    inc     HL
+    call    hexconvert
+
+    ; If highest bit of A is not set then this
+    ; address is invalid for a breakpoint.
+    bit     7, A
+    jp      z, _cmd_sub_break_invalid_address
+
+    ld      D, A
+
+    ; Lower half.
+    ld      B, (HL)
+    inc     HL
+    ld      C, (HL)
+    inc     HL
+    call    hexconvert
+
+    ld      E, A
+
+    ; Breakpoint address now in DE.
+    jp      _cmd_sub_break_done
+
+_cmd_sub_break_invalid_address:
+    ld      HL, cmd_sub_break_invalid_address_message
+    call    print
+
+_cmd_sub_break_done:
+    pop     BC
+    pop     HL
+    pop     DE
+    jp      _prompt_command_ret
+
     ; Given a command string, parses out the command and arguments,
     ; returning the command string pointer in HL and arguments in ARGV.
 parse_cmd:
@@ -323,19 +367,6 @@ parse_cmd:
     call    direct_syscall_swrite
     ld      L, ' '
     call    direct_syscall_swrite
-
-    ld      HL, CMD
-    call    print
-    newline
-
-    ld      L, 'A'
-    call    direct_syscall_swrite
-    ld      L, ' '
-    call    direct_syscall_swrite
-
-    ld      HL, ARGV
-    call    print
-    newline
 
 _parse_cmd_done:
     pop     DE
@@ -605,6 +636,7 @@ command_not_found_message:
 monitor_commands:
     addr    cmd_load
     addr    cmd_exec
+    addr    cmd_break
 monitor_commands_end:
 
 cmd_load:
@@ -613,6 +645,9 @@ cmd_load:
 cmd_exec:
     addr    cmd_sub_exec
     string  "exec"
+cmd_break:
+    addr    cmd_sub_break
+    string  "break"
 
     
 boot_message:
@@ -627,3 +662,6 @@ serial_load_message:
 
 record_invalid_message:
     string  "Invalid Intel-HEX record.\r\n"
+
+cmd_sub_break_invalid_address_message:
+    string  "Invalid breakpoint address.\r\n"
