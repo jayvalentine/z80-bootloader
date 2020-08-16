@@ -53,12 +53,19 @@ CMD_END             = CMD+16
 ARGV                = CMD_END
 ARGV_END            = ARGV+64
 
+BREAKPOINT          = ARGV_END
+
     ; Program reset vector.
     org     $0000
 reset:
     ; Disable interrupts on startup.
     di
     jp      start
+
+    ; Debug breakpoint handler.
+    org     $0028
+breakpoint_entry:
+    jp      breakpoint_handler
 
     ; Syscall handler. Called using the 'rst 48' instruction.
     org     $0030
@@ -91,6 +98,31 @@ interrupt_entry:
     pop     HL
     ei
     reti
+
+breakpoint_handler:
+    ; Store HL on stack, get stack top (return address)
+    ; in HL.
+    ex      (SP), HL
+
+    push    HL
+    push    AF
+    ld      HL, break_message
+    call    print
+    pop     AF
+    pop     HL
+
+    ; Return address is address of breakpoint +1.
+    dec     HL
+
+    ; Restore original instruction.
+    ld      A, (BREAKPOINT)
+    ld      (HL), A
+
+    ; Restore HL.
+    ex      (SP), HL
+
+    ; Re-execute replaced instruction.
+    ret
 
 syscall_handler:
     push    HL
@@ -338,6 +370,15 @@ cmd_sub_break:
     ld      E, A
 
     ; Breakpoint address now in DE.
+    
+    ; Load the byte at that address and store in BREAKPOINT.
+    ld      A, (DE)
+    ld      (BREAKPOINT), A
+
+    ; Set breakpoint (RST 40) at DE.
+    ld      A, $ef
+    ld      (DE), A
+
     jp      _cmd_sub_break_done
 
 _cmd_sub_break_invalid_address:
@@ -362,11 +403,6 @@ parse_cmd:
     ; Second token is ARGV.
     ld      DE, ARGV
     call    parse_token
-
-    ld      L, 'C'
-    call    direct_syscall_swrite
-    ld      L, ' '
-    call    direct_syscall_swrite
 
 _parse_cmd_done:
     pop     DE
@@ -665,3 +701,6 @@ record_invalid_message:
 
 cmd_sub_break_invalid_address_message:
     string  "Invalid breakpoint address.\r\n"
+
+break_message:
+    string  "Breakpoint hit.\r\n"
