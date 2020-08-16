@@ -44,8 +44,14 @@ IHEX_RECORD_END     = IHEX_RECORD+44    ; Assuming a maximum of 16 data bytes fo
                                         ; From observation, this seems valid.
                                         ; Reserve an extra character for NULL.
 
-PROMPT_CMD          = IHEX_RECORD_END
-PROMPT_CMD_END      = PROMPT_CMD+16
+PROMPT_INPUT        = IHEX_RECORD_END
+PROMPT_INPUT_END    = PROMPT_INPUT+64
+
+CMD                 = PROMPT_INPUT_END
+CMD_END             = CMD+16
+
+ARGV                = CMD_END
+ARGV_END            = ARGV+64
 
     ; Program reset vector.
     org     $0000
@@ -203,8 +209,10 @@ _main_prompt_loop:
     ld      HL, prompt
     call    print
 
-    ld      HL, PROMPT_CMD
+    ld      HL, PROMPT_INPUT
     call    getline
+
+    call    parse_cmd
 
     newline
 
@@ -235,8 +243,8 @@ _main_prompt_parse_loop:
     push    HL
 
     ; Compare the string, pointed to by DE,
-    ; with the command we got from user, in PROMPT_CMD.
-    ld      HL, PROMPT_CMD
+    ; with the command we got from user, in CMD.
+    ld      HL, CMD
 _prompt_command_compare:
     ld      C, (HL)
     ld      A, (DE)
@@ -297,6 +305,80 @@ _cmd_sub_load_data:
 cmd_sub_exec:
     call    $8000
     jp      _prompt_command_ret
+
+    ; Given a command string, parses out the command and arguments,
+    ; returning the command string pointer in HL and arguments in ARGV.
+parse_cmd:
+    push    DE
+
+    ; First token is the command.
+    ld      DE, CMD
+    call    parse_token
+
+    ; Second token is ARGV.
+    ld      DE, ARGV
+    call    parse_token
+
+    ld      L, 'C'
+    call    direct_syscall_swrite
+    ld      L, ' '
+    call    direct_syscall_swrite
+
+    ld      HL, CMD
+    call    print
+    newline
+
+    ld      L, 'A'
+    call    direct_syscall_swrite
+    ld      L, ' '
+    call    direct_syscall_swrite
+
+    ld      HL, ARGV
+    call    print
+    newline
+
+_parse_cmd_done:
+    pop     DE
+    ret
+
+    ; Parses a single space-delimited token out of a string, in HL.
+    ; Stores the token in DE. Sets HL to the character in the string after
+    ; the parsed token.
+parse_token:
+    push    DE
+
+    ; Skip any spaces that may be here.
+_parse_token_skip_space:
+    ld      A, (HL)
+    cp      ' '
+    jp      nz, _parse_token_nonspace
+    inc     HL
+    jp      _parse_token_skip_space
+
+    ; HL now points to first non-space character.
+_parse_token_nonspace:
+_parse_token_store:
+    ld      A, (HL)
+    cp      0
+    jp      z, _parse_token_done
+    cp      ' '
+    jp      z, _parse_token_done
+
+    ; Not space or null, so store in DE.
+    ld      (DE), A
+    inc     HL
+    inc     DE
+
+    jp      _parse_token_store
+
+_parse_token_done:
+    ; Store terminating null in DE.
+    ld      A, 0
+    ld      (DE), A
+
+    ; Restore DE and return.
+    pop     DE
+    ret
 
     ; Gets a CR/LF-terminated line from serial port.
     ; Destination address is in HL.
