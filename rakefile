@@ -1,5 +1,7 @@
 require 'zemu'
 
+load '../z80-libraries/tasks.rake'
+
 # Serial Input/Output object
 #
 # Represents a serial connection between the emulated CPU
@@ -92,18 +94,30 @@ class Serial6850 < Zemu::Config::IOPort
 end
 
 desc "Build zboot binary"
-task :build do
-    system("vasmz80_oldstyle -esc -L zboot.lst -Fbin -o zboot.bin zboot.asm")
-    system("z80dasm -l -a -t zboot.bin > zboot.diss")
+task 'build' => 'lib:stdlib' do
+    cmd = "zcc "
+    cmd += "+#{CONFIG} -compiler-sccz80 "
+    cmd += "-O2 -SO2 "
+    cmd += "-L#{LIB} -I#{LIB_INCLUDE} "
+    cmd += "--no-crt "
+    cmd += "-lstdlib "
+    cmd += "-Cl\"-r0x0000\" -o zboot.bin "
+    cmd += "reset.asm debug.asm syscall.asm interrupt.asm handlers.asm zboot.asm ram.asm"
+
+    success = system(cmd)
+
+    if success
+        system("z88dk-dis -o 0x0000 zboot.bin > zboot.diss")
+    end
 end
 
 desc "Flash to ROM"
-task :flash => :build do
+task 'flash' => 'build' do
     system("minipro -p at28c64b -s -w zboot.bin")
 end
 
 desc "Emulate system using Zemu"
-task :run => :build do
+task 'run' => 'build' do
     conf = Zemu::Config.new do
         name "zemu_zforth"
 

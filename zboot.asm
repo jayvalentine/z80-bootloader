@@ -1,149 +1,35 @@
     ; ZBoot, a Z80 Bootloader.
     ; Copyright (c) 2020 Jay Valentine
 
-    ; Helpful macros.
-
-    macro   newline
-    push    HL
-    ld      L, CR
-    call    direct_syscall_swrite
-    ld      L, LF
-    call    direct_syscall_swrite
-    pop     HL
-    endmacro
-
-    ; Macro for defining a syscall.
-    macro   defsyscall, name
-syscall_\1:
-    pop     DE
-    pop     HL    ; Syscall entry will have saved HL and DE, which we want to restore.
-
-    ; Useful if we want to call the syscall directly from within the bootloader.
-direct_syscall_\1:
-    endmacro
-
     ; Character definitions
-CR                  = $0d
-LF                  = $0a
-NULL                = $00
+    defc    CR = $0d
+    defc    LF = $0a
+    defc    NULL = $00
 
-    ; Symbol definitions
-UART_PORT_DATA      = 0b00000001
-UART_PORT_CONTROL   = 0b00000000
+    defc    UART_PORT_DATA = 0b00000001
+    defc    UART_PORT_CONTROL = 0b00000000
 
-SYSTEM_RAM_START    = $f000
+    PUBLIC  UART_PORT_DATA
+    PUBLIC  UART_PORT_CONTROL
 
-RX_BUF              = SYSTEM_RAM_START
-RX_BUF_END          = RX_BUF+$100
-
-RX_BUF_HEAD         = RX_BUF_END
-RX_BUF_TAIL         = RX_BUF_HEAD+1
-
-IHEX_RECORD         = RX_BUF_TAIL+1
-IHEX_RECORD_END     = IHEX_RECORD+44    ; Assuming a maximum of 16 data bytes for a record.
-                                        ; From observation, this seems valid.
-                                        ; Reserve an extra character for NULL.
-
-PROMPT_INPUT        = IHEX_RECORD_END
-PROMPT_INPUT_END    = PROMPT_INPUT+64
-
-CMD                 = PROMPT_INPUT_END
-CMD_END             = CMD+16
-
-ARGV                = CMD_END
-ARGV_END            = ARGV+64
-
-BREAKPOINT          = ARGV_END
-
-    ; Program reset vector.
-    org     $0000
-reset:
-    ; Disable interrupts on startup.
-    di
-    jp      start
-
-    ; Debug breakpoint handler.
-    org     $0028
-breakpoint_entry:
-    jp      breakpoint_handler
-
-    ; Syscall handler. Called using the 'rst 48' instruction.
-    org     $0030
-syscall_entry:
-    jp      syscall_handler
-
-    ; Interrupt handler.
-    org     $0038
-interrupt_entry:
-    di
-    push    HL
-    push    AF
-
-    ; Get current tail of buffer.
-    ld      H, $f0
-    ld      A, (RX_BUF_TAIL)
-    ld      L, A
-
-    ; Read data from UART.
-    in      A, (UART_PORT_DATA)
-
-    ; Store received character.
-    ld      (HL), A
-
-    ; Increment tail.
-    ld      HL, RX_BUF_TAIL
-    inc     (HL)
-
-    pop     AF
-    pop     HL
-    ei
-    reti
-
-breakpoint_handler:
-    ; Store HL on stack, get stack top (return address)
-    ; in HL.
-    ex      (SP), HL
-
-    push    HL
-    push    AF
-    ld      HL, break_message
-    call    print
-    pop     AF
-    pop     HL
-
-    ; Return address is address of breakpoint +1.
-    dec     HL
-
-    ; Restore original instruction.
-    ld      A, (BREAKPOINT)
-    ld      (HL), A
-
-    ; Restore HL.
-    ex      (SP), HL
-
-    ; Re-execute replaced instruction.
-    ret
-
-syscall_handler:
-    push    HL
-    push    DE
-    ld      DE, syscall_table
-    ld      E, A
-    
-    ld      A, (DE)
-    ld      L, A
-    inc     DE
-
-    ld      A, (DE)
-    ld      H, A
-    
-    jp      (HL)
+    ; External declarations of RAM variables.
+    EXTERN  rx_buf
+    EXTERN  rx_buf_head
+    EXTERN  rx_buf_tail
+    EXTERN  ihex_record
+    EXTERN  ihex_record_end
+    EXTERN  prompt_input
+    EXTERN  cmd
+    EXTERN  argv
+    EXTERN  breakpoint
 
     ; Syscall table.
     org     $0100
 syscall_table:
-    addr    syscall_swrite
-    addr    syscall_sread
+    defw    syscall_swrite
+    defw    syscall_sread
+
+    PUBLIC  syscall_table
 
     ; Syscall definitions.
 
@@ -158,7 +44,11 @@ syscall_table:
     ; Description:
     ; Busy-waits until serial port is ready to transmit, then
     ; writes the given character to the serial port.
-    defsyscall  swrite
+syscall_swrite:
+    pop     DE
+    pop     HL
+
+direct_syscall_swrite:
 _swrite_wait:
     ; Wait for ready to send.
     in      A, (UART_PORT_CONTROL)
@@ -181,16 +71,17 @@ _swrite_wait:
     ; Description:
     ; Busy-waits until serial port receives data,
     ; then returns a single received character.
-    defsyscall  sread
-    push    HL
+syscall_sread:
+    pop     DE
 
+direct_syscall_sread:
     ld      H, $f0
-    ld      A, (RX_BUF_HEAD)
+    ld      A, (rx_buf_head)
     ld      L, A
 
     ; Wait for char in buffer.
 _sread_wait:
-    ld      A, (RX_BUF_TAIL)
+    ld      A, (rx_buf_tail)
     cp      L
 
     ; If head and tail are equal, there's no data in buffer.
@@ -201,7 +92,7 @@ _sread_available:
     ld      A, (HL)
 
     ; Increment head.
-    ld      HL, RX_BUF_HEAD
+    ld      HL, rx_buf_head
     inc     (HL)
 
     pop     HL
@@ -226,12 +117,14 @@ start:
 
     ; Initialize RX buffer pointers.
     ld      A, $00
-    ld      (RX_BUF_HEAD), A
-    ld      (RX_BUF_TAIL), A
+    ld      (rx_buf_head), A
+    ld      (rx_buf_tail), A
 
     ; Enable interrupts, mode 1.
     im      1
     ei
+
+    PUBLIC  start
 
 main:
     ld      HL, boot_message
@@ -241,14 +134,14 @@ _main_prompt_loop:
     ld      HL, prompt
     call    print
 
-    ld      HL, PROMPT_INPUT
+    ld      HL, prompt_input
     call    getline
 
     call    parse_cmd
 
-    newline
+    call    newline
 
-    ld      B, (monitor_commands_end-monitor_commands)/2
+    ld      B, monitor_commands_size
     ld      HL, monitor_commands
 _main_prompt_parse_loop:
     ; Load command address in little-endian format.
@@ -275,8 +168,8 @@ _main_prompt_parse_loop:
     push    HL
 
     ; Compare the string, pointed to by DE,
-    ; with the command we got from user, in CMD.
-    ld      HL, CMD
+    ; with the command we got from user, in cmd.
+    ld      HL, cmd
 _prompt_command_compare:
     ld      C, (HL)
     ld      A, (DE)
@@ -330,7 +223,7 @@ _cmd_sub_load_data:
     cp      A, $00
     jp      nz, _cmd_sub_load_data
 
-    newline
+    call    newline
 
     jp      _prompt_command_ret
 
@@ -346,7 +239,7 @@ cmd_sub_break:
     ; Parse breakpoint address.
 
     ; Upper half.
-    ld      HL, ARGV
+    ld      HL, argv
     ld      B, (HL)
     inc     HL
     ld      C, (HL)
@@ -371,9 +264,9 @@ cmd_sub_break:
 
     ; Breakpoint address now in DE.
     
-    ; Load the byte at that address and store in BREAKPOINT.
+    ; Load the byte at that address and store in breakpoint.
     ld      A, (DE)
-    ld      (BREAKPOINT), A
+    ld      (breakpoint), A
 
     ; Set breakpoint (RST 40) at DE.
     ld      A, $ef
@@ -392,16 +285,16 @@ _cmd_sub_break_done:
     jp      _prompt_command_ret
 
     ; Given a command string, parses out the command and arguments,
-    ; returning the command string pointer in HL and arguments in ARGV.
+    ; returning the command string pointer in HL and arguments in argv.
 parse_cmd:
     push    DE
 
     ; First token is the command.
-    ld      DE, CMD
+    ld      DE, cmd
     call    parse_token
 
-    ; Second token is ARGV.
-    ld      DE, ARGV
+    ; Second token is argv.
+    ld      DE, argv
     call    parse_token
 
 _parse_cmd_done:
@@ -452,7 +345,7 @@ _parse_token_done:
 getline:
     push    HL
 
-_getline_skip_whitespace
+_getline_skip_whitespace:
     call    direct_syscall_sread
     cp      CR
     jp      z, _getline_skip_whitespace
@@ -515,15 +408,15 @@ get_ihex_record:
     push    BC
 
     ; Zero the record string.
-    ld      HL, IHEX_RECORD
-    ld      B, IHEX_RECORD_END-IHEX_RECORD
+    ld      HL, ihex_record
+    ld      B, ihex_record_end-ihex_record
 _get_ihex_zero:
     ld      (HL), NULL
     inc     HL
     djnz    _get_ihex_zero
 
     ; Get a CR/LF-delimited record.
-    ld      HL, IHEX_RECORD
+    ld      HL, ihex_record
     call    getline
 
     ; Get a character and echo.
@@ -574,7 +467,7 @@ _get_ihex_record_isdata:
     call    _ihex_sub_getbyte
 
     ; Print CRLF
-    newline
+    call    newline
 
     ; We've processed data, so another record is required.
     ; Return true.
@@ -662,45 +555,66 @@ _hexconvert_sub_islowercase:
     sub     $57
     ret
 
+    ; Helper function to print CRLF.
+newline:
+    push    HL
+    ld      L, CR
+    call    direct_syscall_swrite
+    ld      L, LF
+    call    direct_syscall_swrite
+    pop     HL
+    ret
+
 prompt:
-    string  "Ready.\r\n> "
+    defm    "Ready.\r\n> "
+    defb    0
 
 command_not_found_message:
-    string  "Command not found.\r\n"
+    defm    "Command not found.\r\n"
+    defb    0
 
     ; Command table for the monitor.
 monitor_commands:
-    addr    cmd_load
-    addr    cmd_exec
-    addr    cmd_break
+    defw    cmd_load
+    defw    cmd_exec
+    defw    cmd_break
 monitor_commands_end:
+    defc    monitor_commands_size = (monitor_commands_end-monitor_commands)/2
 
 cmd_load:
-    addr    cmd_sub_load
-    string  "load"
+    defw    cmd_sub_load
+    defm    "load"
+    defb    0
 cmd_exec:
-    addr    cmd_sub_exec
-    string  "exec"
+    defw    cmd_sub_exec
+    defm    "exec"
+    defb    0
 cmd_break:
-    addr    cmd_sub_break
-    string  "break"
+    defw    cmd_sub_break
+    defm    "break"
+    defb    0
 
-    
 boot_message:
     ; Some setup of the display, using ANSI escape sequences.
-    text    "\033[2J"           ; Clear screen
-    text    "\033[1;1H"         ; Cursor to top-left (not all terminal emulators do this when clearing the screen)
-    text    "\033[32;40m"       ; Green text on black background, for that retro feel ;)
-    string  "ZBoot, a Z80 bootloader/monitor by Jay Valentine.\r\n\r\n"
+    defm    "\033[2J"           ; Clear screen
+    defm    "\033[1;1H"         ; Cursor to top-left (not all terminal emulators do this when clearing the screen)
+    defm    "\033[32;40m"       ; Green text on black background, for that retro feel ;)
+    defm    "ZBoot, a Z80 bootloader/monitor by Jay Valentine.\r\n\r\n"
+    defb    0
 
 serial_load_message:
-    string  "Waiting for serial transfer...\r\n"
+    defm    "Waiting for serial transfer...\r\n"
+    defb    0
 
 record_invalid_message:
-    string  "Invalid Intel-HEX record.\r\n"
+    defm    "Invalid Intel-HEX record.\r\n"
+    defb    0
 
 cmd_sub_break_invalid_address_message:
-    string  "Invalid breakpoint address.\r\n"
+    defm    "Invalid breakpoint address.\r\n"
+    defb    0
 
 break_message:
-    string  "Breakpoint hit.\r\n"
+    defm    "Breakpoint hit.\r\n"
+    defb    0
+
