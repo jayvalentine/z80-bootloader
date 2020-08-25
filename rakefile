@@ -101,8 +101,8 @@ task 'build' => 'lib:stdlib' do
     cmd += "-L#{LIB} -I#{LIB_INCLUDE} "
     cmd += "--no-crt "
     cmd += "-lstdlib "
-    cmd += "-Cl\"-r0x0000\" -o zboot.bin "
-    cmd += "reset.asm debug.asm syscall.asm interrupt.asm handlers.asm zboot.asm ram.asm"
+    cmd += "-o zboot.bin "
+    cmd += "reset.asm zboot.asm ram.asm"
 
     success = system(cmd)
 

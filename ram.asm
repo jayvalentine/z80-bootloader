@@ -1,4 +1,3 @@
-    org     $f000
 system_ram:
 rx_buf:
     defs    $100
