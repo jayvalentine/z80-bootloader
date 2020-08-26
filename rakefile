@@ -133,6 +133,7 @@ task 'run' => 'build' do
         name "zemu_zforth"
 
         clock_speed 3_686_400
+        serial_delay 0.001
 
         add_memory (Zemu::Config::ROM.new do
             name "rom"
