@@ -1,6 +1,8 @@
     ; ZBoot, a Z80 Bootloader.
     ; Copyright (c) 2020 Jay Valentine
 
+    INCLUDE "string.inc"
+
     ; Character definitions
     defc    CR = $0d
     defc    LF = $0a
@@ -236,23 +238,14 @@ _main_prompt_parse_loop:
     ; Compare the string, pointed to by DE,
     ; with the command we got from user, in cmd.
     ld      HL, cmd
-_prompt_command_compare:
-    ld      C, (HL)
-    ld      A, (DE)
+    
+    push    HL
+    push    DE
+    call    strcmp
 
-    inc     HL
-    inc     DE
-
-    cp      C
-    jp      nz, _prompt_command_next
-
-    ; If A is null, we've got to the end of both
-    ; strings and not found any differences.
-    cp      NULL
+    ld      A, H
+    or      L
     jp      z, _prompt_command_found
-
-    ; Check next character.
-    jp      _prompt_command_compare
 
 _prompt_command_next:
     ; Discard subroutine address and restore command address.
