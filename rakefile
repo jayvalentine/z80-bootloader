@@ -32,6 +32,8 @@ class Serial6850 < Zemu::Config::IOPort
             "zuint8 io_#{name}_tx;\n" +
             "zuint8 io_#{name}_rx;\n" +
             "zuint8 io_#{name}_status;\n" +
+            "zuint8 io_#{name}_control;\n" +
+            "zboolean int_#{name} = FALSE;\n" +
             "\n" +
             "zusize zemu_io_#{name}_buffer_size(void)\n" +
             "{\n" +
@@ -43,6 +45,7 @@ class Serial6850 < Zemu::Config::IOPort
             "{\n" +
             "    io_#{name}_rx = val;\n" +
             "    io_#{name}_status |= 0x01;\n" +
+            "    int_#{name} = TRUE;\n" +
             "}\n" +
             "\n" +
             "zuint8 zemu_io_#{name}_master_gets(void)\n" +
@@ -56,6 +59,7 @@ class Serial6850 < Zemu::Config::IOPort
             "if (port == #{data_port})\n" +
             "{\n" +
             "    io_#{name}_status &= ~0x01;\n" +
+            "    int_#{name} = FALSE;\n" +
             "    return io_#{name}_rx;\n" +
             "}\n" +
             "else if (port == #{control_port})\n" +
@@ -73,7 +77,13 @@ class Serial6850 < Zemu::Config::IOPort
             "else if (port == #{control_port})\n" +
             "{\n" +
             "    if (value & 0x03) io_#{name}_status = 0x02;\n" +
+            "    else io_#{name}_control = value;\n" +
             "}\n"
+        end
+
+        when_clock do
+            "if (int_#{name}) zemu_io_int_on(instance);\n" +
+            "else zemu_io_int_off(instance);\n"
         end
     end
 
@@ -99,6 +109,7 @@ task 'build' => 'lib:stdlib' do
     cmd += "+#{CONFIG} -compiler-sccz80 "
     cmd += "-O2 -SO2 "
     cmd += "-L#{LIB} -I#{LIB_INCLUDE} "
+    cmd += "-Ca\"-I#{LIB_INCLUDE}\" "
     cmd += "--no-crt "
     cmd += "-lstdlib "
     cmd += "-o zboot.bin "
