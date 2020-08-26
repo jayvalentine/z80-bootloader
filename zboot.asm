@@ -238,10 +238,18 @@ _main_prompt_parse_loop:
     ; Compare the string, pointed to by DE,
     ; with the command we got from user, in cmd.
     ld      HL, cmd
-    
+
+    ; Set up parameters for function call.
     push    HL
     push    DE
+
     call    strcmp
+
+    ; Dispose of stack frame.
+    inc     SP
+    inc     SP
+    inc     SP
+    inc     SP
 
     ld      A, H
     or      L
