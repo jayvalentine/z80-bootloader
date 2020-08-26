@@ -12,16 +12,16 @@
     PUBLIC  UART_PORT_DATA
     PUBLIC  UART_PORT_CONTROL
 
-    ; External declarations of RAM variables.
-    EXTERN  rx_buf
-    EXTERN  rx_buf_head
-    EXTERN  rx_buf_tail
-    EXTERN  ihex_record
-    EXTERN  ihex_record_end
-    EXTERN  prompt_input
-    EXTERN  cmd
-    EXTERN  argv
-    EXTERN  breakpoint
+    ; RAM variables.
+    defc    rx_buf = 0xf000
+    defc    rx_buf_head = rx_buf + 256
+    defc    rx_buf_tail = rx_buf_head + 1
+    defc    ihex_record = rx_buf_tail + 1
+    defc    ihex_record_end = ihex_record + 44
+    defc    prompt_input = ihex_record_end
+    defc    cmd = prompt_input + 64
+    defc    argv = cmd + 16
+    defc    breakpoint = argv + 64
 
     ; Syscall table.
 syscall_table:
@@ -137,8 +137,10 @@ _swrite_wait:
     ; then returns a single received character.
 syscall_sread:
     pop     DE
+    pop     HL
 
 direct_syscall_sread:
+    push    HL
     ld      H, $f0
     ld      A, (rx_buf_head)
     ld      L, A
@@ -681,6 +683,3 @@ cmd_sub_break_invalid_address_message:
 break_message:
     defm    "Breakpoint hit.\r\n"
     defb    0
-
-    ; Start RAM at address 0xf000.
-    defs    0xf000 - ASMPC

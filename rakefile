@@ -102,7 +102,7 @@ task 'build' => 'lib:stdlib' do
     cmd += "--no-crt "
     cmd += "-lstdlib "
     cmd += "-o zboot.bin "
-    cmd += "reset.asm zboot.asm ram.asm"
+    cmd += "reset.asm zboot.asm"
 
     success = system(cmd)
 
