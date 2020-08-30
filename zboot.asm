@@ -96,7 +96,7 @@ _interrupt_skip1:
 
     ; Ready to transmit character?
     bit     1, A
-    jp      nz, _interrupt_skip2
+    jp      z, _interrupt_skip2
 
     call    serial_write_handler
     jp      _interrupt_handle_ret
@@ -137,10 +137,10 @@ serial_read_handler:
 
 serial_write_handler:
     ; Get current head and tail of buffer.
-    ld      A, (tx_buf_head)
+    ld      A, (tx_buf_tail)
     ld      L, A
 
-    ld      A, (tx_buf_tail)
+    ld      A, (tx_buf_head)
 
     ; If equal, we've got nothing to transmit.
     ; In this case, we disable tx interrupts and return.
@@ -162,8 +162,8 @@ _tx:
     ld      A, (HL)
     out     (UART_PORT_DATA), A
 
-    ; Increment head.
-    ld      HL, tx_buf_head
+    ; Increment tail.
+    ld      HL, tx_buf_tail
     inc     (HL)
 
     ret
@@ -192,14 +192,17 @@ direct_syscall_swrite:
     push    HL
     push    DE
 
+    ; This needs to be an atomic operation; Disable interrupts.
+    di
+
     ; Preserve character to send because we're going to need
     ; L.
     ld      E, L
 
-    ld      A, (tx_buf_tail)
+    ld      A, (tx_buf_head)
     ld      L, A
 
-    ld      A, (tx_buf_head)
+    ld      A, (tx_buf_tail)
 
     ; If head and tail are equal, we need to enable interrupts and send.
     ; Otherwise we just append to the buffer.
@@ -221,8 +224,10 @@ _swrite_append:
     ld      (HL), E
 
 _swrite_done:
-    ld      HL, tx_buf_tail
+    ld      HL, tx_buf_head
     inc     (HL)
+
+    ei
 
     pop     DE
     pop     HL
@@ -289,6 +294,8 @@ start:
     ld      A, $00
     ld      (rx_buf_head), A
     ld      (rx_buf_tail), A
+    ld      (tx_buf_head), A
+    ld      (tx_buf_tail), A
 
     ; Enable interrupts, mode 1.
     im      1
