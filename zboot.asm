@@ -16,14 +16,22 @@
 
     ; RAM variables.
     defc    rx_buf = 0xf000
-    defc    rx_buf_head = rx_buf + 256
+    defc    tx_buf = 0xf100
+    
+    defc    rx_buf_head = tx_buf + 256
     defc    rx_buf_tail = rx_buf_head + 1
-    defc    ihex_record = rx_buf_tail + 1
+    defc    tx_buf_head = rx_buf_tail + 1
+    defc    tx_buf_tail = tx_buf_head + 1
+
+    defc    ihex_record = tx_buf_tail + 1
     defc    ihex_record_end = ihex_record + 44
+
     defc    prompt_input = ihex_record_end
     defc    cmd = prompt_input + 64
     defc    argv = cmd + 16
+
     defc    breakpoint = argv + 64
+
 
     ; Syscall table.
 syscall_table:
@@ -71,8 +79,45 @@ syscall_handler:
 interrupt_handler:
     di
     push    HL
+    push    DE
+    push    BC
     push    AF
 
+    ; Determine reason for interrupt frm 6850.
+    in      A, (UART_PORT_CONTROL)
+    
+    ; Character received?
+    bit     0, A
+    jp      z, _interrupt_skip1
+
+    call    serial_read_handler
+    jp      _interrupt_handle_ret
+_interrupt_skip1:
+
+    ; Ready to transmit character?
+    bit     1, A
+    jp      nz, _interrupt_skip2
+
+    call    serial_write_handler
+    jp      _interrupt_handle_ret
+_interrupt_skip2:
+
+    ; Not any of the known causes.
+    call    unknown_interrupt
+
+_interrupt_handle_ret:
+    pop     AF
+    pop     BC
+    pop     DE
+    pop     HL
+    ei
+    reti
+
+    PUBLIC  breakpoint_handler
+    PUBLIC  syscall_handler
+    PUBLIC  interrupt_handler
+
+serial_read_handler:
     ; Get current tail of buffer.
     ld      H, $f0
     ld      A, (rx_buf_tail)
@@ -88,14 +133,43 @@ interrupt_handler:
     ld      HL, rx_buf_tail
     inc     (HL)
 
-    pop     AF
-    pop     HL
-    ei
-    reti
+    ret
 
-    PUBLIC  breakpoint_handler
-    PUBLIC  syscall_handler
-    PUBLIC  interrupt_handler
+serial_write_handler:
+    ; Get current head and tail of buffer.
+    ld      A, (tx_buf_head)
+    ld      L, A
+
+    ld      A, (tx_buf_tail)
+
+    ; If equal, we've got nothing to transmit.
+    ; In this case, we disable tx interrupts and return.
+    cp      L
+    jp      nz, _tx
+
+    ld      A, 0b10010110
+    out     (UART_PORT_CONTROL), A
+    ret
+_tx:
+
+    ; Otherwise, we've got something to send.
+    ; Bottom half of pointer to head is already in L.
+    ; We just need to load the top half into H.
+    ld      A, $f1
+    ld      H, A
+
+    ; Load character and send.
+    ld      A, (HL)
+    out     (UART_PORT_DATA), A
+
+    ; Increment head.
+    ld      HL, tx_buf_head
+    inc     (HL)
+
+    ret
+
+unknown_interrupt:
+    ret
 
     ; Syscall definitions.
 
@@ -115,15 +189,43 @@ syscall_swrite:
     pop     HL
 
 direct_syscall_swrite:
-_swrite_wait:
-    ; Wait for ready to send.
-    in      A, (UART_PORT_CONTROL)
-    bit     1, A
-    jp      z, _swrite_wait
+    push    HL
+    push    DE
 
-    ; Send character.
-    ld      A, L
+    ; Preserve character to send because we're going to need
+    ; L.
+    ld      E, L
+
+    ld      A, (tx_buf_tail)
+    ld      L, A
+
+    ld      A, (tx_buf_head)
+
+    ; If head and tail are equal, we need to enable interrupts and send.
+    ; Otherwise we just append to the buffer.
+    cp      L
+    jp      nz, _swrite_append
+
+    ; Need to enable TX interrupts.
+    ld      A, 0b10110110
+    out     (UART_PORT_CONTROL), A
+
+    ; Send data on serial port.
+    ld      A, E
     out     (UART_PORT_DATA), A
+
+    jp      _swrite_done
+
+_swrite_append:
+    ld      H, $f1
+    ld      (HL), E
+
+_swrite_done:
+    ld      HL, tx_buf_tail
+    inc     (HL)
+
+    pop     DE
+    pop     HL
     ret
 
     ; 1: sread: Read character from serial port.
@@ -179,7 +281,7 @@ start:
     ; Configure UART.
     ; UART will run at 57600baud with a 3.6864MHz clock.
     ; Word length of 8 bits + 1 stop.
-    ; Interrupts enabled.
+    ; Interrupts enabled on RX, initially disabled on TX.
     ld      A, 0b10010110
     out     (UART_PORT_CONTROL), A
 
@@ -451,18 +553,16 @@ print:
     jp      z, _print_done
 
 _print_loop:
-    ; Wait for ready to send.
-    in      A, (UART_PORT_CONTROL)
-    bit     1, A
-    jp      z, _print_loop
-
     ; Send a character
     ld      A, (HL)
     cp      $00
     jp      z, _print_done
 
     inc     HL
-    out     (UART_PORT_DATA), A
+    push    HL
+    ld      L, A
+    call    direct_syscall_swrite
+    pop     HL
 
     jp      _print_loop
 
