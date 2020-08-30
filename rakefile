@@ -29,11 +29,13 @@ class Serial6850 < Zemu::Config::IOPort
         super
 
         when_setup do
+            "#include <stdio.h>\n" +
             "zuint8 io_#{name}_tx;\n" +
             "zuint8 io_#{name}_rx;\n" +
             "zuint8 io_#{name}_status;\n" +
             "zuint8 io_#{name}_control;\n" +
-            "zboolean int_#{name} = FALSE;\n" +
+            "zboolean int_#{name}_tx = FALSE;\n" +
+            "zboolean int_#{name}_rx = FALSE;\n" +
             "\n" +
             "zusize zemu_io_#{name}_buffer_size(void)\n" +
             "{\n" +
@@ -45,12 +47,13 @@ class Serial6850 < Zemu::Config::IOPort
             "{\n" +
             "    io_#{name}_rx = val;\n" +
             "    io_#{name}_status |= 0x01;\n" +
-            "    int_#{name} = TRUE;\n" +
+            "    int_#{name}_rx = TRUE;\n" +
             "}\n" +
             "\n" +
             "zuint8 zemu_io_#{name}_master_gets(void)\n" +
             "{\n" +
             "    io_#{name}_status |= 0x02;\n" +
+            "    if (io_#{name}_control & 0b00100000) int_#{name}_tx = TRUE;\n" +
             "    return io_#{name}_tx;\n" +
             "}\n"
         end
@@ -59,7 +62,7 @@ class Serial6850 < Zemu::Config::IOPort
             "if (port == #{data_port})\n" +
             "{\n" +
             "    io_#{name}_status &= ~0x01;\n" +
-            "    int_#{name} = FALSE;\n" +
+            "    int_#{name}_rx = FALSE;\n" +
             "    return io_#{name}_rx;\n" +
             "}\n" +
             "else if (port == #{control_port})\n" +
@@ -72,6 +75,7 @@ class Serial6850 < Zemu::Config::IOPort
             "if (port == #{data_port})\n" +
             "{\n" +
             "    io_#{name}_status &= ~0x02;\n" +
+            "    int_#{name}_tx = FALSE;" +
             "    io_#{name}_tx = value;\n" +
             "}\n" +
             "else if (port == #{control_port})\n" +
@@ -82,7 +86,7 @@ class Serial6850 < Zemu::Config::IOPort
         end
 
         when_clock do
-            "if (int_#{name}) zemu_io_int_on(instance);\n" +
+            "if (int_#{name}_rx || int_#{name}_tx) { printf(\"Interrupt active.\\n\"); zemu_io_int_on(instance); }\n" +
             "else zemu_io_int_off(instance);\n"
         end
     end
