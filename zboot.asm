@@ -83,8 +83,10 @@ interrupt_handler:
     push    BC
     push    AF
 
-    ; Determine reason for interrupt frm 6850.
+    ; Is this an interrupt from the 6850?
     in      A, (UART_PORT_CONTROL)
+    bit     7, A
+    jp      z, _interrupt_skip2
     
     ; Character received?
     bit     0, A
@@ -155,8 +157,7 @@ _tx:
     ; Otherwise, we've got something to send.
     ; Bottom half of pointer to head is already in L.
     ; We just need to load the top half into H.
-    ld      A, $f1
-    ld      H, A
+    ld      H, $f1
 
     ; Load character and send.
     ld      A, (HL)
@@ -204,20 +205,13 @@ direct_syscall_swrite:
 
     ld      A, (tx_buf_tail)
 
-    ; If head and tail are equal, we need to enable interrupts and send.
-    ; Otherwise we just append to the buffer.
+    ; If head and tail are equal, we need to enable interrupts before appending to the buffer.
     cp      L
     jp      nz, _swrite_append
 
-    ; Need to enable TX interrupts.
+    ; Enable TX interrupts
     ld      A, 0b10110110
     out     (UART_PORT_CONTROL), A
-
-    ; Send data on serial port.
-    ld      A, E
-    out     (UART_PORT_DATA), A
-
-    jp      _swrite_done
 
 _swrite_append:
     ld      H, $f1
@@ -530,7 +524,13 @@ _getline_skip_whitespace:
 
     ; We now have our first valid character in A.
 _getline_characters:
-    out     (UART_PORT_DATA), A ; Echo.
+    ; Echo.
+    push    HL
+    ld      L, A
+    call    direct_syscall_swrite
+    ld      A, L
+    pop     HL
+
     ld      (HL), A
     inc     HL
 
