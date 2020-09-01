@@ -53,7 +53,6 @@ class Serial6850 < Zemu::Config::IOPort
             "zuint8 zemu_io_#{name}_master_gets(void)\n" +
             "{\n" +
             "    io_#{name}_status |= 0x02;\n" +
-            "    if (io_#{name}_control & 0b00100000) int_#{name}_tx = TRUE;\n" +
             "    return io_#{name}_tx;\n" +
             "}\n"
         end
@@ -75,7 +74,6 @@ class Serial6850 < Zemu::Config::IOPort
             "if (port == #{data_port})\n" +
             "{\n" +
             "    io_#{name}_status &= ~0x02;\n" +
-            "    int_#{name}_tx = FALSE;" +
             "    io_#{name}_tx = value;\n" +
             "}\n" +
             "else if (port == #{control_port})\n" +
@@ -86,8 +84,10 @@ class Serial6850 < Zemu::Config::IOPort
         end
 
         when_clock do
-            "if (int_#{name}_rx || (int_#{name}_tx && (io_#{name}_control & 0b00100000))) zemu_io_int_on(instance);\n" +
-            "else zemu_io_int_off(instance);\n"
+            "if ((io_#{name}_control & 0x20) && (io_#{name}_status & 0x02)) int_#{name}_tx = TRUE;\n" +
+            "else int_#{name}_tx = FALSE;\n" +
+            "if (int_#{name}_rx || int_#{name}_tx) { io_#{name}_status |= 0x80; zemu_io_int_on(instance); }\n" +
+            "else { io_#{name}_status &= ~0x80; zemu_io_int_off(instance); }\n"
         end
     end
 
