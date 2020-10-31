@@ -37,6 +37,8 @@
 syscall_table:
     defw    syscall_swrite
     defw    syscall_sread
+    defw    syscall_dwrite
+    defw    syscall_dread
 
 breakpoint_handler:
     ; Store HL on stack, get stack top (return address)
@@ -267,6 +269,84 @@ _sread_available:
     pop     HL
     ret
 
+    ; 2: dwrite: Write 512 bytes to disk sector.
+    ;
+    ; Parameters:
+    ; Sector number in DEBC
+    ; Location of buffer to write from in HL.
+    ;
+    ; Returns:
+    ; Nothing;
+    ;
+    ; Description:
+    ; Writes a sector to the CF-card disk,
+    ; from the buffer pointed to by HL.
+syscall_dwrite:
+    pop     DE
+    pop     HL
+
+direct_syscall_dwrite:
+    push    HL
+
+    ; Sector number now in DEBC, so we just need
+    ; to call the set_lba subroutine.
+    call    _wait_cmd
+    call    _set_lba
+
+    ; Transfer one sector
+    ld      A, $01
+    out     (DISKPORT+2), A
+
+    ; Write sector command.
+    ld      A, $30
+    out     (DISKPORT+7), A
+
+    pop     HL
+
+    ; Write 512 bytes to CF-card.
+    call    _write_data
+
+    ret
+
+    ; 3: dread: Read 512 bytes from disk sector.
+    ;
+    ; Parameters:
+    ; Sector number in DEBC
+    ; Location of buffer to read to in HL.
+    ;
+    ; Returns:
+    ; Nothing;
+    ;
+    ; Description:
+    ; Reads a sector from the CF-card disk,
+    ; into the buffer pointed to by HL.
+syscall_dread:
+    pop     DE
+    pop     HL
+
+direct_syscall_dread:
+    push    HL
+
+    ; Sector number in DEBC, so we just need
+    ; to call the set_lba subroutine.
+    call    _wait_cmd
+    call    _set_lba
+
+    ; Transfer one sector
+    ld      A, $01
+    out     (DISKPORT+2), A
+
+    ; Read sector command.
+    ld      A, $20
+    out     (DISKPORT+7), A
+    
+    pop     HL
+
+    ; Read 512 bytes from CF-card.
+    call    _read_data
+
+    ret
+
 start:
     ; Initialize stack pointer.
     ld      SP, $ffff
@@ -290,6 +370,9 @@ start:
     ld      (rx_buf_tail), A
     ld      (tx_buf_head), A
     ld      (tx_buf_tail), A
+
+    ; Initialise CF-card.
+    call    _init_disk
 
     ; Enable interrupts, mode 1.
     im      1
@@ -346,7 +429,7 @@ _main_prompt_parse_loop:
     push    HL
     push    DE
 
-    call    strcmp
+    call    _strcmp
 
     ; Dispose of stack frame.
     inc     SP
@@ -399,6 +482,18 @@ _cmd_sub_load_data:
 
 cmd_sub_exec:
     call    $8000
+    jp      _prompt_command_ret
+
+cmd_sub_boot:
+    ; Load first sector from disk into $8000.
+    ld      DE, 0
+    ld      BC, 0
+    ld      HL, $8000
+    call    direct_syscall_dread
+
+    ; Execute loaded sector.
+    call    $8000
+
     jp      _prompt_command_ret
 
 cmd_sub_break:
@@ -739,6 +834,185 @@ newline:
     pop     HL
     ret
 
+    ; Compact-Flash IDE drivers.
+
+    ; Definitions and externs.
+
+    ; IO port for CF-card.
+    DEFC    DISKPORT = $18
+
+    ; **************************
+    ; HIGH-LEVEL ROUTINES
+    ;
+    ; These subroutines are the high-level
+    ; driver routines that a program
+    ; uses to read/write the CF-card.
+    ; **************************
+
+    ; void init_disk(void)
+    ;
+    ; Initialises CF-card.
+_init_disk:
+    push    AF
+    call    _wait
+    ld      A, $04
+    out     (DISKPORT+7), A
+
+    call    _wait
+    ld      A, $01
+    out     (DISKPORT+1), A
+
+    call    _wait
+    ld      A, $ef
+    out     (DISKPORT+7), A
+
+    call    _chkerr
+    pop     AF
+    ret
+
+    ; **************************
+    ; DATA TRANSFER ROUTINES
+    ;
+    ; These subroutines transfer blocks to or from
+    ; the CF-card.
+    ; **************************
+
+    ; Reads 512 bytes (one sector) from the CF card.
+    ; Reads the data into the location pointed to by HL.
+    ; Assumes a read command has been previously initiated.
+_read_data:
+    push    AF
+    push    BC
+    push    HL
+
+    call    _wait_data
+    call    _chkerr
+
+    ld      C, DISKPORT
+    ld      B, 0
+
+    ; Load 512 bytes into HL.
+    inir
+    inir
+
+__read_data_done:
+    pop     HL
+    pop     BC
+    pop     AF
+    ret
+
+    ; Writes 512 bytes (one sector) to the CF card.
+    ; Writes the data from the location pointed to by HL.
+    ; Assumes a write command has been previously initiated.
+_write_data:
+    push    AF
+    push    BC
+    push    HL
+
+    call    _wait_data
+
+    ld      C, DISKPORT
+    ld      B, 0
+
+    ; Write 512 bytes from HL.
+    otir
+    otir
+
+    call    _wait_cmd
+    call    _chkerr
+
+__write_data_done:
+    pop     HL
+    pop     BC
+    pop     AF
+    ret
+
+    ; **************************
+    ; UTILITY ROUTINES
+    ;
+    ; Shorthands for functionality of the CF-card.
+    ; **************************
+
+    ; Set the LBA for the CF-card, stored as a 28-bit value
+    ; in DEBC (the top 4 bits of D are ignored).
+_set_lba:
+    push    AF
+
+    ; Set the lower 3/4ths of the LBA via registers 3-5.
+    ld      A, C
+    out     (DISKPORT+3), A
+    ld      A, B
+    out     (DISKPORT+4), A
+    ld      A, E
+    out     (DISKPORT+5), A
+    
+    ; Special handling for register 6, as only the bottom half is used
+    ; for LBA.
+    ld      A, D
+
+    ; We only care about the bottom half of this top byte.
+    and     A, %00001111
+
+    ; Master, LBA mode.
+    or      A, %11100000
+    out     (DISKPORT+6), A
+    
+    pop     AF
+    ret
+
+    ; **************************
+    ; WAIT ROUTINES
+    ;
+    ; These subroutines implement waits for various
+    ; conditions of the CF-card.
+    ; **************************
+_wait:
+    in      A, (DISKPORT+7)
+    and     %10000000
+    jp      nz, _wait
+
+    ret
+
+_wait_data:
+    in      A, (DISKPORT+7)
+    and     %10001000
+    xor     %00001000
+    jp      nz, _wait_data
+
+    ret
+
+_wait_cmd:
+    in      A, (DISKPORT+7)
+    and     %11000000
+    xor     %01000000
+    jp      nz, _wait_cmd
+
+    ret
+
+    ; **************************
+    ; ERROR CHECKING ROUTINES
+    ;
+    ; These subroutines check for and report
+    ; errors from the CF-card.
+    ; **************************
+_chkerr:
+    in      A, (DISKPORT+7)
+    bit     0, A
+    jp      z, _chkerr_noerr
+
+    ld      HL, _error
+    call    print
+
+_chkerr_noerr:
+    ret
+
+    ; **************************
+    ; DATA
+    ; **************************
+_error:
+    defm    "Error in CF-card!\n\r"
+    defb    0
+
 prompt:
     defm    "Ready.\r\n> "
     defb    0
@@ -752,6 +1026,7 @@ monitor_commands:
     defw    cmd_load
     defw    cmd_exec
     defw    cmd_break
+    defw    cmd_boot
 monitor_commands_end:
     defc    monitor_commands_size = (monitor_commands_end-monitor_commands)/2
 
@@ -766,6 +1041,10 @@ cmd_exec:
 cmd_break:
     defw    cmd_sub_break
     defm    "break"
+    defb    0
+cmd_boot:
+    defw    cmd_sub_boot
+    defm    "boot"
     defb    0
 
 boot_message:
