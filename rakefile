@@ -1,4 +1,4 @@
-require 'zemu'
+require_relative '../zemu/lib/zemu'
 
 load '../z80-libraries/tasks.rake'
 
@@ -114,10 +114,11 @@ task 'build' => 'lib:stdlib' do
     cmd += "-O2 -SO2 "
     cmd += "-L#{LIB} -I#{LIB_INCLUDE} "
     cmd += "-Ca\"-I#{LIB_INCLUDE}\" "
-    cmd += "--no-crt "
+    cmd += "-crt0 reset.asm "
     cmd += "-lstdlib "
+    cmd += "-m "
     cmd += "-o zboot.bin "
-    cmd += "reset.asm zboot.asm"
+    cmd += "zboot.asm"
 
     success = system(cmd)
 
